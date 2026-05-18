@@ -14,11 +14,30 @@ const app = express();
 app.use('/api/payment/webhook', express.raw({ type: 'application/json' }));
 
 // Baaki sab routes ke liye normal JSON parser
+
 // app.use(cors());
+
+// app.use(cors({
+//   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+//   credentials: true
+// }));
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: function(origin, callback) {
+    if (
+      !origin ||
+      origin === process.env.FRONTEND_URL ||
+      origin.endsWith('.vercel.app') ||
+      origin === 'http://localhost:3000'
+    ) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
+
 app.use(express.json());
 app.use('/uploads', express.static('uploads'));
 
