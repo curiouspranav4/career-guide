@@ -1,6 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
-const cors = require('cors');
+// const cors = require('cors');
 const dotenv = require('dotenv');
 const crypto = require('crypto');
 
@@ -11,7 +11,7 @@ const app = express();
 // ── IMPORTANT: Razorpay Webhook ke liye raw body PEHLE parse karo ─────────────
 // express.json() se PEHLE ye aana chahiye — warna webhook signature verify
 // nahi ho paayega (raw body chahiye hota hai HMAC ke liye)
-app.use('/api/payment/webhook', express.raw({ type: 'application/json' }));
+// app.use('/api/payment/webhook', express.raw({ type: 'application/json' }));
 
 // Baaki sab routes ke liye normal JSON parser
 
@@ -22,21 +22,36 @@ app.use('/api/payment/webhook', express.raw({ type: 'application/json' }));
 //   credentials: true
 // }));
 
-app.use(cors({
-  origin: function(origin, callback) {
-    if (
-      !origin ||
-      origin === process.env.FRONTEND_URL ||
-      origin.endsWith('.vercel.app') ||
-      origin === 'http://localhost:3000'
-    ) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true
-}));
+// app.use(cors({
+//   origin: function(origin, callback) {
+//     if (
+//       !origin ||
+//       origin === process.env.FRONTEND_URL ||
+//       origin.endsWith('.vercel.app') ||
+//       origin === 'http://localhost:3000'
+//     ) {
+//       callback(null, true);
+//     } else {
+//       callback(new Error('Not allowed by CORS'));
+//     }
+//   },
+//   credentials: true
+// }));
+
+
+// CORS — bilkul pehle, kuch bhi upar nahi
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  next();
+});
+
+// Webhook ke liye raw body (CORS ke baad)
+app.use('/api/payment/webhook', express.raw({ type: 'application/json' }));
+
 
 app.use(express.json());
 app.use('/uploads', express.static('uploads'));
