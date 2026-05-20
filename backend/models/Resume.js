@@ -4,6 +4,7 @@ const resumeSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   fileName: { type: String, required: true },
   filePath: { type: String, required: true },
+  fileUrl: { type: String, default: '' },
   extractedSkills: [String],
   extractedText: { type: String, default: '' },
   recommendedJobs: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Job' }],
