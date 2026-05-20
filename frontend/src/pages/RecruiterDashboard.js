@@ -434,7 +434,7 @@ const RecruiterDashboard = () => {
                                     <option value="rejected">Rejected</option>
                                   </select>
                                   {resumePath ? (
-                                    <a href={"http://localhost:5000/" + resumePath}
+                                    <a href={rd?.resume?.fileUrl || (process.env.REACT_APP_API_URL?.replace('/api','') + '/' + resumePath)}
                                       target="_blank"
                                       rel="noreferrer"
                                       className="text-xs bg-blue-50 text-blue-600 px-3 py-1 rounded-lg hover:bg-blue-100">
