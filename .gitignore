@@ -1,3 +1,23 @@
+# Environment variables (NEVER push to GitHub)
+.env
+.env.*
 backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+
+# Dependencies
+node_modules/
 backend/node_modules/
 frontend/node_modules/
+
+# Next.js build & Vercel cache
+frontend/.next/
+frontend/out/
+.vercel/
+
+# Local uploaded test resumes & misc
+backend/uploads/
+codebase.txt
+*.log
+.DS_Store
