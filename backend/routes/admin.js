@@ -17,22 +17,31 @@ const verifyAdmin = (req, res, next) => {
   }
 };
 
+const getBackendOrigin = (req) => {
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http')
+    .split(',')[0]
+    .trim();
+  const host = req.get('host');
+  if (host) return `${proto}://${host}`;
+  return (process.env.BACKEND_URL || 'http://localhost:5000').replace(/\/+$/, '');
+};
+
 // Get dashboard stats
 router.get('/stats', verifyAdmin, async (req, res) => {
   try {
-    const totalJobSeekers = await User.countDocuments({ 
-      role: { $in: ['job_seeker_fresher', 'job_seeker_experienced'] } 
+    const totalJobSeekers = await User.countDocuments({
+      role: { $in: ['job_seeker_fresher', 'job_seeker_experienced'] }
     });
     const totalRecruiters = await User.countDocuments({ role: 'recruiter' });
     const totalJobs = await Job.countDocuments();
     const totalResumes = await Resume.countDocuments();
-    
-    const recentJobSeekers = await User.find({ 
-      role: { $in: ['job_seeker_fresher', 'job_seeker_experienced'] } 
+
+    const recentJobSeekers = await User.find({
+      role: { $in: ['job_seeker_fresher', 'job_seeker_experienced'] }
     }).select('-password').sort({ createdAt: -1 }).limit(5);
 
-    const recentRecruiters = await User.find({ 
-      role: 'recruiter' 
+    const recentRecruiters = await User.find({
+      role: 'recruiter'
     }).select('-password').sort({ createdAt: -1 }).limit(5);
 
     res.json({ totalJobSeekers, totalRecruiters, totalJobs, totalResumes, recentJobSeekers, recentRecruiters });
@@ -44,8 +53,8 @@ router.get('/stats', verifyAdmin, async (req, res) => {
 // Get all job seekers
 router.get('/jobseekers', verifyAdmin, async (req, res) => {
   try {
-    const users = await User.find({ 
-      role: { $in: ['job_seeker_fresher', 'job_seeker_experienced'] } 
+    const users = await User.find({
+      role: { $in: ['job_seeker_fresher', 'job_seeker_experienced'] }
     }).select('-password').sort({ createdAt: -1 });
     res.json(users);
   } catch (error) {
@@ -56,9 +65,9 @@ router.get('/jobseekers', verifyAdmin, async (req, res) => {
 // Get pending recruiters - PEHLE SPECIFIC ROUTE
 router.get('/recruiters/pending', verifyAdmin, async (req, res) => {
   try {
-    const recruiters = await User.find({ 
-      role: 'recruiter', 
-      recruiterStatus: 'pending' 
+    const recruiters = await User.find({
+      role: 'recruiter',
+      recruiterStatus: 'pending'
     }).select('-password').sort({ createdAt: -1 });
     res.json(recruiters);
   } catch (error) {
@@ -83,11 +92,11 @@ router.put('/recruiters/:id/status', verifyAdmin, async (req, res) => {
     const { status, reason } = req.body;
     const recruiter = await User.findById(req.params.id);
     if (!recruiter) return res.status(404).json({ message: 'Recruiter not found' });
-    
+
     recruiter.recruiterStatus = status;
     if (reason) recruiter.recruiterRejectionReason = reason;
     await recruiter.save();
-    
+
     res.json({ message: 'Recruiter status updated to ' + status });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -111,7 +120,7 @@ router.get('/jobs', verifyAdmin, async (req, res) => {
       .populate('postedBy', 'name email companyName designation')
       .populate('applicants.user', 'name email role')
       .sort({ createdAt: -1 });
-    
+
     const filteredJobs = jobs.map(job => {
       const jobObj = job.toObject();
       jobObj.applicants = jobObj.applicants.filter(a => a.user !== null);
@@ -133,13 +142,23 @@ router.delete('/jobs/:id', verifyAdmin, async (req, res) => {
   }
 });
 
-// Get all resumes
+// Get all resumes (always attach live /api/resume/file/:id URL)
 router.get('/resumes', verifyAdmin, async (req, res) => {
   try {
+    const origin = getBackendOrigin(req);
     const resumes = await Resume.find()
+      .select('-extractedText')
       .populate('user', 'name email role')
-      .sort({ uploadedAt: -1 });
-    res.json(resumes);
+      .sort({ uploadedAt: -1 })
+      .lean();
+
+    const formatted = resumes.map((r) => ({
+      ...r,
+      filePath: `api/resume/file/${r._id}`,
+      fileUrl: `${origin}/api/resume/file/${r._id}`,
+    }));
+
+    res.json(formatted);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

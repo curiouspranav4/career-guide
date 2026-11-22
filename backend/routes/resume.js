@@ -3,8 +3,10 @@ const router = express.Router();
 const multer = require('multer');
 const fs = require('fs');
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 const Resume = require('../models/Resume');
 const Job = require('../models/Job');
+const User = require('../models/User');
 
 const verifyToken = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
@@ -17,16 +19,11 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    if (!fs.existsSync('uploads')) fs.mkdirSync('uploads');
-    cb(null, 'uploads/');
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + '-' + file.originalname);
-  },
+// Memory storage — PDF seedha MongoDB mein store hogi (Render disk wipe safe)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
 });
-const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
 const skillsList = [
   // ── IT & Software Development ──
@@ -185,16 +182,71 @@ const extractTextFromPDF = (buffer) => {
   });
 };
 
-const getFileUrl = (filePath) => {
-  const backendUrl = process.env.BACKEND_URL || 'http://localhost:5000';
-  const cleanPath = filePath.replace(/\\/g, '/');
-  return `${backendUrl}/${cleanPath}`;
+// Always returns the exact live domain (never mismatches fleb vs f1eb or localhost)
+const getBackendOrigin = (req) => {
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http')
+    .split(',')[0]
+    .trim();
+  const host = req.get('host');
+  if (host) return `${proto}://${host}`;
+  return (process.env.BACKEND_URL || 'http://localhost:5000').replace(/\/+$/, '');
 };
+
+const buildResumeUrl = (req, resumeId) =>
+  `${getBackendOrigin(req)}/api/resume/file/${resumeId}`;
+
+// Serve stored PDF directly from MongoDB (works for User, Recruiter & Admin)
+router.get('/file/:id', async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).send('Invalid resume ID');
+    }
+
+    const resume = await Resume.findById(req.params.id)
+      .select('+fileData contentType fileName filePath')
+      .lean();
+
+    if (!resume) {
+      return res.status(404).send('Resume not found');
+    }
+
+    const safeName = (resume.fileName || 'resume.pdf').replace(/["\r\n\\]/g, '_');
+
+    if (resume.fileData) {
+      const pdfBuffer = Buffer.isBuffer(resume.fileData)
+        ? resume.fileData
+        : Buffer.from(resume.fileData.buffer || resume.fileData);
+
+      res.setHeader('Content-Type', resume.contentType || 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+      return res.send(pdfBuffer);
+    }
+
+    // Fallback for any local disk file
+    if (resume.filePath && fs.existsSync(resume.filePath)) {
+      res.setHeader('Content-Type', resume.contentType || 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+      return fs.createReadStream(resume.filePath).pipe(res);
+    }
+
+    return res
+      .status(404)
+      .send(
+        'This older resume file was cleared by server restart. Please re-upload your resume once to store it permanently.'
+      );
+  } catch (error) {
+    res.status(500).send('Failed to load resume');
+  }
+});
 
 // Upload resume
 router.post('/upload', verifyToken, upload.single('resume'), async (req, res) => {
   try {
-    const fileBuffer = fs.readFileSync(req.file.path);
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ message: 'Please upload a PDF resume file' });
+    }
+
+    const fileBuffer = req.file.buffer;
     const extractedText = await extractTextFromPDF(fileBuffer);
     const extractedSkills = extractSkills(extractedText);
     const validRegexes = extractedSkills.map(safeRegex).filter((r) => r !== null);
@@ -207,28 +259,33 @@ router.post('/upload', verifyToken, upload.single('resume'), async (req, res) =>
             .lean()
         : [];
 
-    const filePath = req.file.path.replace(/\\/g, '/');
-    const fileUrl = getFileUrl(filePath);
-
     const resume = new Resume({
       user: req.user.id,
       fileName: req.file.originalname,
-      filePath,
-      fileUrl,
+      fileData: fileBuffer,
+      contentType: req.file.mimetype || 'application/pdf',
       extractedSkills,
       extractedText,
       recommendedJobs: recommendedJobs.map((j) => j._id),
     });
 
+    resume.filePath = `api/resume/file/${resume._id}`;
+    resume.fileUrl = buildResumeUrl(req, resume._id);
+
     await resume.save();
-    res.json({ resume, recommendedJobs, extractedSkills });
+    await User.findByIdAndUpdate(req.user.id, { resumeUrl: resume.fileUrl });
+
+    const resumeObj = resume.toObject();
+    delete resumeObj.fileData;
+
+    res.json({ resume: resumeObj, recommendedJobs, extractedSkills });
   } catch (error) {
     console.log('Error:', error.message);
     res.status(500).json({ message: error.message });
   }
 });
 
-// Get my resumes (lean + no extra populate join)
+// Get my resumes (lean + dynamic live URL)
 router.get('/my', verifyToken, async (req, res) => {
   try {
     const resumes = await Resume.find({ user: req.user.id })
@@ -239,7 +296,8 @@ router.get('/my', verifyToken, async (req, res) => {
     const resumesWithUrl = resumes.map((r) => ({
       ...r,
       extractedText: r.extractedText ? r.extractedText.slice(0, 600) : '',
-      fileUrl: r.fileUrl || getFileUrl(r.filePath),
+      filePath: `api/resume/file/${r._id}`,
+      fileUrl: buildResumeUrl(req, r._id),
     }));
 
     res.json(resumesWithUrl);
@@ -274,7 +332,8 @@ router.get('/user/:userId', verifyToken, async (req, res) => {
     res.json({
       resume: {
         ...resume,
-        fileUrl: resume.fileUrl || getFileUrl(resume.filePath),
+        filePath: `api/resume/file/${resume._id}`,
+        fileUrl: buildResumeUrl(req, resume._id),
       },
       matchPercent,
     });
