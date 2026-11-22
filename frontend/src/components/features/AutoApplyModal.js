@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   Zap,
@@ -37,6 +38,7 @@ export default function AutoApplyModal({
   const { user, refreshUser } = useAuth();
   const isPremium = user?.plan === 'premium';
 
+  const [mounted, setMounted] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [autoApplyEnabled, setAutoApplyEnabled] = useState(false);
   const [autoApplyThreshold, setAutoApplyThreshold] = useState(75);
@@ -45,12 +47,33 @@ export default function AutoApplyModal({
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Lock background page scroll while modal is open
+  useEffect(() => {
+    if (!open) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open, onClose]);
+
+  useEffect(() => {
     if (!open || !isPremium) return;
-    let mounted = true;
+    let active = true;
     setFetching(true);
     getCredits()
       .then(({ data }) => {
-        if (!mounted || !data) return;
+        if (!active || !data) return;
         setAutoApplyEnabled(Boolean(data.autoApplyEnabled));
         setAutoApplyThreshold(Number(data.autoApplyThreshold ?? 75));
         setMinExpectedSalary(Number(data.minExpectedSalary ?? 0));
@@ -62,14 +85,14 @@ export default function AutoApplyModal({
       })
       .catch(() => {})
       .finally(() => {
-        if (mounted) setFetching(false);
+        if (active) setFetching(false);
       });
     return () => {
-      mounted = false;
+      active = false;
     };
   }, [open, isPremium]);
 
-  if (!open) return null;
+  if (!open || !mounted) return null;
 
   const parseLocations = () =>
     locationsInput
@@ -124,52 +147,84 @@ export default function AutoApplyModal({
 
   const selectedCities = parseLocations().map((c) => c.toLowerCase());
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
+  const modalContent = (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 9999,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '16px',
+      }}
+    >
+      {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-ink/60 backdrop-blur-sm"
+        className="bg-ink/60 backdrop-blur-sm"
+        style={{ position: 'fixed', inset: 0 }}
         onClick={onClose}
       />
 
-      <div className="relative z-10 w-full max-w-lg max-h-[88vh] flex flex-col bg-white rounded-3xl border border-stone-200 shadow-2xl overflow-hidden animate-fade-up">
-        <div className="shrink-0 bg-ink text-white px-5 py-4 relative overflow-hidden">
-          <div className="pointer-events-none absolute -top-12 -right-12 w-36 h-36 rounded-full bg-tealbrand-600/30 blur-3xl" />
+      {/* Modal Card */}
+      <div
+        className="bg-white rounded-2xl border border-stone-200 shadow-2xl"
+        style={{
+          position: 'relative',
+          zIndex: 10,
+          width: '100%',
+          maxWidth: '480px',
+          maxHeight: '85vh',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Fixed Header */}
+        <div
+          className="bg-ink text-white px-5 py-3.5 relative"
+          style={{ flexShrink: 0, overflow: 'hidden' }}
+        >
+          <div className="pointer-events-none absolute -top-12 -right-12 w-32 h-32 rounded-full bg-tealbrand-600/30 blur-3xl" />
           <button
             type="button"
             onClick={onClose}
-            className="absolute top-3.5 right-3.5 p-2 rounded-xl text-stone-400 hover:text-white hover:bg-white/10 transition-colors"
+            className="absolute top-3 right-3 p-1.5 rounded-lg text-stone-400 hover:text-white hover:bg-white/10 transition-colors"
             aria-label="Close modal"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
 
-          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-tealbrand-600/25 border border-tealbrand-600/40 text-tealbrand-100 text-[11px] font-bold mb-2">
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-tealbrand-600/25 border border-tealbrand-600/40 text-tealbrand-100 text-[10px] font-bold mb-1.5">
             <Zap className="w-3 h-3 text-tealbrand-600" />
             SMART AUTO-APPLY
           </div>
-          <h2 className="font-display text-xl font-semibold">
+          <h2 className="font-display text-lg font-semibold leading-tight">
             Automate your applications
           </h2>
-          <p className="text-xs text-stone-300 mt-0.5">
+          <p className="text-[11px] text-stone-300 mt-0.5">
             Uses 50 credits per automatic application whenever a matching role is
             posted.
           </p>
         </div>
 
         {!isPremium ? (
-          <div className="overflow-y-auto p-6 text-center space-y-4">
-            <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center mx-auto">
+          <div
+            className="p-5 text-center space-y-3"
+            style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}
+          >
+            <div className="w-11 h-11 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center mx-auto">
               <Lock className="w-5 h-5" />
             </div>
             <h3 className="font-display text-lg font-semibold text-ink">
               Premium Feature Locked
             </h3>
-            <p className="text-sm text-muted max-w-sm mx-auto leading-relaxed">
+            <p className="text-xs text-muted max-w-sm mx-auto leading-relaxed">
               Upgrade to CareerGuide Premium (₹99) to unlock 1,000 monthly
               credits and 24/7 Smart Auto-Apply with Location, Match %, and
               Salary LPA filters.
             </p>
-            <div className="flex items-center justify-center gap-3 pt-1">
+            <div className="flex items-center justify-center gap-2.5 pt-1">
               <Button variant="secondary" onClick={onClose}>
                 Maybe Later
               </Button>
@@ -190,14 +245,33 @@ export default function AutoApplyModal({
             <Spinner label="Loading your preferences..." />
           </div>
         ) : (
-          <form onSubmit={handleSave} className="flex flex-col flex-1 min-h-0">
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-              <div className="flex items-center justify-between p-3.5 rounded-2xl bg-canvas border border-stone-200">
+          <form
+            onSubmit={handleSave}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              flex: '1 1 auto',
+              minHeight: 0,
+              overflow: 'hidden',
+            }}
+          >
+            {/* Scrollable Body */}
+            <div
+              className="px-5 py-3.5 space-y-3.5"
+              style={{
+                flex: '1 1 auto',
+                overflowY: 'auto',
+                minHeight: 0,
+                overscrollBehavior: 'contain',
+              }}
+            >
+              {/* Toggle */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-canvas border border-stone-200">
                 <div>
                   <p className="text-sm font-bold text-ink">
                     Enable Smart Auto-Apply
                   </p>
-                  <p className="text-xs text-muted mt-0.5">
+                  <p className="text-[11px] text-muted mt-0.5">
                     {autoApplyEnabled
                       ? 'Active — applying to matching new roles'
                       : 'Paused — toggle on to start auto-applying'}
@@ -208,25 +282,26 @@ export default function AutoApplyModal({
                   role="switch"
                   aria-checked={autoApplyEnabled}
                   onClick={() => setAutoApplyEnabled((prev) => !prev)}
-                  className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
                     autoApplyEnabled ? 'bg-tealbrand-600' : 'bg-stone-300'
                   }`}
                 >
                   <span
-                    className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow-sm transition-transform ${
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${
                       autoApplyEnabled ? 'translate-x-5' : 'translate-x-0'
                     }`}
                   />
                 </button>
               </div>
 
-              <div className="space-y-1.5">
+              {/* Match Slider */}
+              <div className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-muted flex items-center gap-1.5">
+                  <label className="text-[11px] font-semibold uppercase tracking-wider text-muted flex items-center gap-1.5">
                     <Sliders className="w-3.5 h-3.5 text-coral-600" />
                     Minimum Skill Match
                   </label>
-                  <span className="font-mono text-xs font-bold text-coral-600 bg-coral-50 px-2.5 py-0.5 rounded-lg border border-coral-200">
+                  <span className="font-mono text-xs font-bold text-coral-600 bg-coral-50 px-2 py-0.5 rounded-md border border-coral-200">
                     {autoApplyThreshold}%+
                   </span>
                 </div>
@@ -239,15 +314,16 @@ export default function AutoApplyModal({
                   onChange={(e) => setAutoApplyThreshold(Number(e.target.value))}
                   className="w-full accent-coral-600 cursor-pointer"
                 />
-                <div className="flex justify-between text-[11px] text-muted font-mono">
+                <div className="flex justify-between text-[10px] text-muted font-mono">
                   <span>40%</span>
                   <span>75% (Recommended)</span>
                   <span>95%</span>
                 </div>
               </div>
 
+              {/* Minimum Salary */}
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-muted mb-1.5 flex items-center gap-1.5">
+                <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted mb-1 flex items-center gap-1.5">
                   <IndianRupee className="w-3.5 h-3.5 text-tealbrand-600" />
                   Minimum Expected Salary (LPA)
                 </label>
@@ -259,12 +335,13 @@ export default function AutoApplyModal({
                   value={minExpectedSalary}
                   onChange={(e) => setMinExpectedSalary(e.target.value)}
                   placeholder="0 for any salary"
-                  className="w-full px-3.5 py-2 rounded-xl bg-canvas border border-stone-200 text-sm text-ink focus:outline-none focus:border-coral-600"
+                  className="w-full px-3 py-2 rounded-xl bg-canvas border border-stone-200 text-sm text-ink focus:outline-none focus:border-coral-600"
                 />
               </div>
 
-              <div className="space-y-2">
-                <label className="block text-xs font-semibold uppercase tracking-wider text-muted flex items-center gap-1.5">
+              {/* Preferred Locations */}
+              <div className="space-y-1.5">
+                <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted flex items-center gap-1.5">
                   <MapPin className="w-3.5 h-3.5 text-coral-600" />
                   Preferred Locations (Comma separated)
                 </label>
@@ -272,8 +349,8 @@ export default function AutoApplyModal({
                   type="text"
                   value={locationsInput}
                   onChange={(e) => setLocationsInput(e.target.value)}
-                  placeholder="e.g. Noida, Bengaluru, Remote (empty = all cities)"
-                  className="w-full px-3.5 py-2 rounded-xl bg-canvas border border-stone-200 text-sm text-ink placeholder:text-stone-400 focus:outline-none focus:border-coral-600"
+                  placeholder="e.g. Noida, Bengaluru, Remote (empty = all)"
+                  className="w-full px-3 py-2 rounded-xl bg-canvas border border-stone-200 text-sm text-ink placeholder:text-stone-400 focus:outline-none focus:border-coral-600"
                 />
                 <div className="flex flex-wrap gap-1.5 pt-0.5">
                   {POPULAR_CITIES.map((city) => {
@@ -283,7 +360,7 @@ export default function AutoApplyModal({
                         key={city}
                         type="button"
                         onClick={() => toggleCityChip(city)}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                        className={`px-2 py-1 rounded-lg text-[11px] font-medium border transition-colors ${
                           active
                             ? 'bg-tealbrand-50 text-tealbrand-700 border-tealbrand-200'
                             : 'bg-canvas text-muted border-stone-200 hover:text-ink'
@@ -298,7 +375,11 @@ export default function AutoApplyModal({
               </div>
             </div>
 
-            <div className="shrink-0 flex items-center justify-end gap-2.5 px-5 py-3.5 border-t border-stone-100 bg-white">
+            {/* Fixed Footer */}
+            <div
+              className="flex items-center justify-end gap-2.5 px-5 py-3 border-t border-stone-100 bg-white"
+              style={{ flexShrink: 0 }}
+            >
               <Button type="button" variant="secondary" onClick={onClose}>
                 Cancel
               </Button>
@@ -312,4 +393,6 @@ export default function AutoApplyModal({
       </div>
     </div>
   );
+
+  return createPortal(modalContent, document.body);
 }
